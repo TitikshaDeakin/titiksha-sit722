@@ -114,3 +114,12 @@ jobs:
           tags: |
             ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }}
             ${{ env.ACR_LOGIN_SERVER }}/product_service:testing
+            
+      - name: Build & push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }}
+            ${{ env.ACR_LOGIN_SERVER }}/frontend:testing
