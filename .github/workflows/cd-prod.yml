@@ -1,0 +1,47 @@
+name: CD to Production
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+  # The tag we promote to "production"
+  FROM_TAG: testing
+  TO_TAG: prod
+
+jobs:
+  promote_and_deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Azure OIDC login (same app as CI) ---
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login --name "${{ env.ACR_NAME }}"
+
+      # --- Promote images in ACR: :testing -> :prod ---
+      - name: Promote images to :prod
+        run: |
+          set -e
+          REG="${ACR_LOGIN_SERVER}"
+
+          for IMG in customer_service order_service product_service frontend; do
+            echo "Promoting $IMG:${FROM_TAG} -> $IMG:${TO_TAG}"
+            docker pull "$REG/$IMG:${FROM_TAG}"
+            docker tag  "$REG/$IMG:${FROM_TAG}" "$REG/$IMG:${TO_TAG}"
+            docker push "$REG/$IMG:${TO_TAG}"
+          done
