@@ -1,4 +1,4 @@
-name: CI – test, then build & push to ACR (branch: testing)
+name: CI – test, then build & push to ACR (branch:testing)
 
 on:
   push:
