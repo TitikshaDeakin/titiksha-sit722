@@ -1,23 +1,24 @@
-name: CI – test, then build & push to ACR (branch:testing)
+name: CI test and build (testing branch)
 
 on:
   push:
-    branches: [ testing ]
+    branches: [ "testing" ]
 
 permissions:
   contents: read
-  id-token: write    # required for Azure OIDC
+  id-token: write
 
 env:
-  PYTHON_VERSION: "3.11"
-  ACR_NAME: ${{ secrets.ACR_NAME }}              # e.g. sit722acr123
-  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }} # e.g. sit722acr123.azurecr.io
+  PYTHON_VERSION: "3.10"   # ← use 3.10 for FastAPI/TestClient compat
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   test_backends:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false                 # ← don’t cancel other services on first failure
       matrix:
         svc: [customer_service, order_service, product_service]
     steps:
@@ -29,36 +30,36 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
-      - name: Install deps (prod for build & dev for tests)
+      - name: Install dependencies
         working-directory: backend/${{ matrix.svc }}
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          # common test deps if not already pinned:
+          pip install pytest pytest-cov
 
-      - name: Run unit tests
+      - name: Run unit tests (verbose)
         working-directory: backend/${{ matrix.svc }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend/${{ matrix.svc }}
         run: |
-          pytest -q
+          python -m pytest -q -rA
 
   build_and_push_images:
     needs: test_backends
     runs-on: ubuntu-latest
+    if: ${{ success() }}               # only build if ALL tests passed
     steps:
       - uses: actions/checkout@v4
-
-      # ---- Azure OIDC login (no passwords/secrets) ----
-      - name: Azure login (OIDC)
+      - name: Azure login
         uses: azure/login@v2
         with:
-          client-id:     ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:     ${{ secrets.AZURE_TENANT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - name: ACR login
         run: az acr login --name "${{ env.ACR_NAME }}"
-
-      # ---- Build & push backend images ----
       - name: Build & push customer_service
         uses: docker/build-push-action@v6
         with:
@@ -67,7 +68,6 @@ jobs:
           tags: |
             ${{ env.ACR_LOGIN_SERVER }}/customer_service:${{ env.IMAGE_TAG }}
             ${{ env.ACR_LOGIN_SERVER }}/customer_service:testing
-
       - name: Build & push order_service
         uses: docker/build-push-action@v6
         with:
@@ -76,7 +76,6 @@ jobs:
           tags: |
             ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ env.IMAGE_TAG }}
             ${{ env.ACR_LOGIN_SERVER }}/order_service:testing
-
       - name: Build & push product_service
         uses: docker/build-push-action@v6
         with:
@@ -85,13 +84,3 @@ jobs:
           tags: |
             ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ env.IMAGE_TAG }}
             ${{ env.ACR_LOGIN_SERVER }}/product_service:testing
-
-      # (Optional) Frontend image too, if needed for staging later
-      - name: Build & push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frontend
-          push: true
-          tags: |
-            ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.IMAGE_TAG }}
-            ${{ env.ACR_LOGIN_SERVER }}/frontend:testing
