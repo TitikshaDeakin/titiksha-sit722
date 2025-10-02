@@ -17,10 +17,28 @@ env:
 jobs:
   test_backends:
     runs-on: ubuntu-latest
+
+    # 1) Bring up Postgres for tests
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U testuser -d testdb"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
     strategy:
-      fail-fast: false                 # ← don’t cancel other services on first failure
+      fail-fast: false
       matrix:
         svc: [customer_service, order_service, product_service]
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,16 +54,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # common test deps if not already pinned:
           pip install pytest pytest-cov
 
+      # 2) WAIT for Postgres to be ready (robust)
+      - name: Install psql client and wait for DB
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+          for i in {1..30}; do
+            PGPASSWORD=testpassword psql -h 127.0.0.1 -U testuser -d testdb -c "select 1" && break
+            echo "Waiting for Postgres... ($i/30)"
+            sleep 2
+          done
+
+      # 3) Run tests with DB URL injected
       - name: Run unit tests (verbose)
         working-directory: backend/${{ matrix.svc }}
         env:
+          DATABASE_URL: postgresql://testuser:testpassword@127.0.0.1:5432/testdb
           PYTHONPATH: ${{ github.workspace }}/backend/${{ matrix.svc }}
         run: |
           python -m pytest -q -rA
-
+  
   build_and_push_images:
     needs: test_backends
     runs-on: ubuntu-latest
