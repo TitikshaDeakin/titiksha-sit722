@@ -1,40 +1,78 @@
 name: CD to Staging (Docker)
 
 on:
+  # Fire automatically after CI finishes
   workflow_run:
     workflows: ["CI test and build (testing branch)"]
     types: [completed]
 
+permissions:
+  contents: read
+
 env:
-  ACR_LOGIN_SERVER: sit722acr.azurecr.io
-  IMAGE_TAG: testing
+  ACR_LOGIN_SERVER: sit722acr.azurecr.io   # your ACR
+  IMAGE_TAG: testing                       # images tagged by CI
+  COMPOSE_FILE: docker-compose.staging.yml # lives at repo root
 
 jobs:
   staging_deploy:
+    # only run if CI concluded successfully
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Docker login to ACR
-        run: |
-          az acr login --name sit722acr
+    steps:
+      - name: Checkout repo (for compose file)
+        uses: actions/checkout@v4
+
+      - name: Login to ACR
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Pull images referenced by compose
+        run: docker compose -f $COMPOSE_FILE pull
 
       - name: Start staging environment
-        run: docker compose -f docker-compose.staging.yml up -d
+        run: docker compose -f $COMPOSE_FILE up -d
 
       - name: Smoke test frontend
         run: |
-          sleep 20
-          curl -s http://localhost:8080 | head -n 10
+          # wait a bit for containers to boot
+          for i in {1..20}; do
+            if curl -fsS http://localhost:8080 >/dev/null; then
+              echo "✅ Frontend responded"; exit 0
+            fi
+            echo "⏳ waiting ($i/20) ..."
+            sleep 3
+          done
+          echo "❌ Frontend not responding. Showing logs:"
+          docker compose -f $COMPOSE_FILE logs
+          exit 1
 
       - name: Show running containers
+        if: ${{ always() }}
         run: docker ps
 
   cleanup_staging:
     needs: staging_deploy
+    if: ${{ always() }}   # tear down even if deploy/smoke fails
     runs-on: ubuntu-latest
-    if: always()
+
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to ACR (optional, safe to keep)
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
       - name: Stop staging environment
-        run: docker compose -f docker-compose.staging.yml down -v
+        run: docker compose -f $COMPOSE_FILE down -v
+
+      - name: Docker cleanup (optional)
+        run: |
+          docker system prune -f
