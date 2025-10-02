@@ -1,0 +1,40 @@
+name: CD to Staging (Docker)
+
+on:
+  workflow_run:
+    workflows: ["CI test and build (testing branch)"]
+    types: [completed]
+
+env:
+  ACR_LOGIN_SERVER: sit722acr.azurecr.io
+  IMAGE_TAG: testing
+
+jobs:
+  staging_deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker login to ACR
+        run: |
+          az acr login --name sit722acr
+
+      - name: Start staging environment
+        run: docker compose -f docker-compose.staging.yml up -d
+
+      - name: Smoke test frontend
+        run: |
+          sleep 20
+          curl -s http://localhost:8080 | head -n 10
+
+      - name: Show running containers
+        run: docker ps
+
+  cleanup_staging:
+    needs: staging_deploy
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Stop staging environment
+        run: docker compose -f docker-compose.staging.yml down -v

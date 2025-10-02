@@ -1,0 +1,21 @@
+version: "3.9"
+services:
+  customer_service:
+    image: sit722acr.azurecr.io/customer_service:testing
+    ports:
+      - "8001:8000"
+
+  order_service:
+    image: sit722acr.azurecr.io/order_service:testing
+    ports:
+      - "8002:8000"
+
+  product_service:
+    image: sit722acr.azurecr.io/product_service:testing
+    ports:
+      - "8003:8000"
+
+  frontend:
+    image: sit722acr.azurecr.io/frontend:testing
+    ports:
+      - "8080:80"
